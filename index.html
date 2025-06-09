@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-commerce Sales Chatbot (eBay)</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.7.7/dist/axios.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.7/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    if (window.location.protocol === 'file:') {
+      document.getElementById('root').innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+          <h1 style="color: red;">Error</h1>
+          <p>Cannot load from file:// URL.</p>
+          <p>Run 'python app.py' and access <a href="http://127.0.0.1:5000">http://127.0.0.1:5000</a>.</p>
+        </div>
+      `;
+    } else {
+      axios.defaults.baseURL = '/';
+
+      class ErrorBoundary extends React.Component {
+        state = { error: null };
+        static getDerivedStateFromError(error) {
+          console.error('ErrorBoundary caught:', error);
+          return { error: error.message };
+        }
+        render() {
+          if (this.state.error) {
+            return (
+              <div className="flex items-center justify-center h-screen bg-gray-100">
+                <div className="bg-red-100 p-4 rounded shadow-md">
+                  <h2 className="text-xl text-red-600">Error</h2>
+                  <p>{this.state.error}</p>
+                  <p>Check console (F12) and ensure backend is running.</p>
+                </div>
+              </div>
+            );
+          }
+          return this.props.children;
+        }
+      }
+
+      const Chatbot = () => {
+        const [messages, setMessages] = useState([]);
+        const [input, setInput] = useState('');
+        const [user, setUser] = useState(null);
+        const [username, setUsername] = useState('');
+        const [password, setPassword] = useState('');
+        const [sessionId, setSessionId] = useState(null);
+        const [view, setView] = useState('login');
+        const [loading, setLoading] = useState(false);
+        const [showOrdersModal, setShowOrdersModal] = useState(false);
+        const [orders, setOrders] = useState([]);
+
+        useEffect(() => {
+          console.log('Chatbot component mounted');
+        }, []);
+
+        const handleLogin = async (e) => {
+          e.preventDefault();
+          console.log('Attempting login:', { username, password });
+          try {
+            const response = await axios.post('/api/login', { username, password });
+            console.log('Login response:', response.data);
+            setUser(response.data.user);
+            setSessionId(response.data.session_id);
+            setMessages([{ text: 'Hello! I’m here to help you shop for products on eBay. What are you looking for?', sender: 'bot', timestamp: new Date() }]);
+          } catch (error) {
+            console.error('Login error:', error, 'Response:', error.response);
+            alert('Login failed: ' + (error.response?.data?.error || error.message));
+          }
+        };
+
+        const handleSignup = async (e) => {
+          e.preventDefault();
+          console.log('Attempting signup:', { username, password });
+          try {
+            const response = await axios.post('/api/signup', { username, password });
+            console.log('Signup response:', response.data);
+            alert('Signup successful! Please log in.');
+            setView('login');
+          } catch (error) {
+            console.error('Signup error:', error, 'Response:', error.response);
+            alert('Signup failed: ' + (error.response?.data?.error || error.message));
+          }
+        };
+
+        const handleSignout = async () => {
+          try {
+            await axios.post('/api/signout', { session_id: sessionId });
+            console.log('Signed out');
+            setUser(null);
+            setSessionId(null);
+            setMessages([]);
+            setView('login');
+            setOrders([]);
+          } catch (error) {
+            console.error('Signout error:', error);
+            alert('Error signing out: ' + (error.response?.data?.error || error.message));
+          }
+        };
+
+        const handleSend = async () => {
+          if (!input.trim()) return;
+          const userMessage = { text: input, sender: 'user', timestamp: new Date() };
+          try {
+            setMessages([...messages, userMessage]);
+            setInput('');
+            setLoading(true);
+            console.log('Sending message:', input);
+
+            const response = await axios.post('/api/chat', {
+              message: input,
+              session_id: sessionId,
+              user_id: user?.id
+            });
+            console.log('Chat response:', response.data);
+            const botMessage = { 
+              text: response.data.reply, 
+              sender: 'bot', 
+              timestamp: new Date(), 
+              products: response.data.products || [], 
+              recommendation: response.data.recommendation || null,
+              orders: response.data.orders || []
+            };
+            setMessages((prev) => [...prev, botMessage]);
+            if (response.data.orders) {
+              setOrders(response.data.orders);
+            }
+          } catch (error) {
+            console.error('Chat error:', error, 'Response:', error.response);
+            setMessages((prev) => [...prev, { text: 'Sorry, I encountered an error. Let’s try again!', sender: 'bot', timestamp: new Date() }]);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        const handleBuyNow = async (productId) => {
+          try {
+            setLoading(true);
+            const response = await axios.post('/api/chat', {
+              message: `buy ${productId}`,
+              session_id: sessionId,
+              user_id: user?.id
+            });
+            console.log('Buy Now response:', response.data);
+            const botMessage = { text: response.data.reply, sender: 'bot', timestamp: new Date(), products: response.data.products || [] };
+            setMessages((prev) => [...prev, botMessage]);
+          } catch (error) {
+            console.error('Buy Now error:', error);
+            setMessages((prev) => [...prev, { text: 'Error processing purchase. Try again!', sender: 'bot', timestamp: new Date() }]);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        const handleViewOrders = async () => {
+          try {
+            setLoading(true);
+            const response = await axios.post('/api/chat', {
+              message: 'show my orders',
+              session_id: sessionId,
+              user_id: user?.id
+            });
+            console.log('View Orders response:', response.data);  // Debug log
+            setOrders(response.data.orders || []);
+            setShowOrdersModal(true);
+          } catch (error) {
+            console.error('View Orders error:', error, 'Response:', error.response);
+            setMessages((prev) => [...prev, { text: 'Error fetching orders. Try again!', sender: 'bot', timestamp: new Date() }]);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        const handleReset = () => {
+          try {
+            setMessages([{ text: 'Conversation reset. How can I assist you now?', sender: 'bot', timestamp: new Date() }]);
+            console.log('Conversation reset');
+          } catch (error) {
+            console.error('Reset error:', error);
+          }
+        };
+
+        useEffect(() => {
+          const chatContainer = document.getElementById('chat-container');
+          if (chatContainer) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          }
+        }, [messages]);
+
+        if (!user) {
+          return (
+            <div className="flex items-center justify-center h-screen bg-gray-100">
+              <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+                {view === 'login' ? (
+                  <>
+                    <h2 className="text-2xl font-semibold mb-4 text-gray-800">Login</h2>
+                    <form onSubmit={handleLogin}>
+                      <input
+                        type="text"
+                        placeholder="Username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="w-full p-3 mb-4 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full p-3 mb-4 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition">Login</button>
+                    </form>
+                    <p className="mt-4 text-center text-gray-600">
+                      New user? <button onClick={() => setView('signup')} className="text-blue-600 underline hover:text-blue-800">Sign up</button>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-2xl font-semibold mb-4 text-gray-800">Sign Up</h2>
+                    <form onSubmit={handleSignup}>
+                      <input
+                        type="text"
+                        placeholder="Username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="w-full p-3 mb-4 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full p-3 mb-4 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <button type="submit" className="w-full bg-green-600 text-white p-3 rounded-lg hover:bg-green-700 transition">Sign Up</button>
+                    </form>
+                    <p className="mt-4 text-center text-gray-600">
+                      Already have an account? <button onClick={() => setView('login')} className="text-blue-600 underline hover:text-blue-800">Log in</button>
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex flex-col h-screen bg-gray-50">
+            <div className="bg-blue-600 text-white p-4 flex justify-between items-center shadow-md">
+              <h1 className="text-xl font-semibold">E-commerce Sales Chatbot (eBay)</h1>
+              <div>
+                <button onClick={handleViewOrders} className="bg-purple-500 px-4 py-2 rounded-lg mr-2 hover:bg-purple-600 transition">View Orders</button>
+                <button onClick={handleReset} className="bg-red-500 px-4 py-2 rounded-lg mr-2 hover:bg-red-600 transition">Reset Chat</button>
+                <button onClick={handleSignout} className="bg-gray-500 px-4 py-2 rounded-lg hover:bg-gray-600 transition">Sign Out</button>
+              </div>
+            </div>
+            <div id="chat-container" className="flex-1 p-6 overflow-y-auto bg-gray-100">
+              {messages.map((msg, index) => (
+                <div key={index} className={`my-3 flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-lg p-4 rounded-lg shadow ${msg.sender === 'user' ? 'bg-blue-200' : 'bg-white'}`}>
+                    <p className="text-sm">{msg.text}</p>
+                    {msg.products && msg.products.length > 0 && (
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {msg.products.map((product, idx) => (
+                          <div key={idx} className="bg-gray-50 p-3 rounded-lg shadow-sm border flex flex-col">
+                            <img 
+                              src={product.image} 
+                              alt={product.name} 
+                              className="w-full h-32 object-contain mb-2" 
+                              onError={(e) => { e.target.src = "https://via.placeholder.com/150?text=Image+Not+Available"; }} 
+                            />
+                            <h3 className="font-semibold text-gray-800">{product.name}</h3>
+                            <p className="text-gray-600">${product.price.toFixed(2)}</p>
+                            <button
+                              onClick={() => handleBuyNow(product.id)}
+                              className="mt-2 bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600 transition"
+                            >
+                              Buy Now
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {msg.recommendation && (
+                      <p className="mt-2 text-sm text-gray-600">{msg.recommendation}</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">{msg.timestamp.toLocaleTimeString()}</p>
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="flex justify-center my-3">
+                  <div className="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-8 w-8 animate-spin"></div>
+                </div>
+              )}
+            </div>
+            <div className="bg-white p-4 border-t flex items-center">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                placeholder="Type your message..."
+                className="flex-1 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button onClick={handleSend} className="ml-3 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
+                Send
+              </button>
+            </div>
+            {showOrdersModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                <div className="bg-white p-6 rounded-lg shadow-lg max-w-lg w-full">
+                  <h2 className="text-xl font-semibold mb-4">Your Orders</h2>
+                  {orders.length === 0 ? (
+                    <p>No orders found.</p>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto">
+                      {orders.map((order, idx) => (
+                        <div key={idx} className="border-b py-2">
+                          <p><strong>Item:</strong> {order.title}</p>
+                          <p><strong>Price:</strong> ${order.price}</p>
+                          <p><strong>Purchased On:</strong> {order.purchase_date}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => setShowOrdersModal(false)}
+                    className="mt-4 bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      ReactDOM.render(
+        <ErrorBoundary>
+          <Chatbot />
+        </ErrorBoundary>,
+        document.getElementById('root')
+      );
+    }
+  </script>
+</body>
+</html>
